@@ -11,84 +11,72 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
 logger = logging.getLogger(__name__)
 
-# Initialize database
-db = Database()
-
-def main():
+async def main():
     """Main function to run the bot"""
-    # Check if bot token is provided
-    if not Config.BOT_TOKEN:
-        logger.error("Bot token not provided. Please set BOT_TOKEN in .env file")
-        return
+    logger.info("Starting Telegram Bot...")
+    
+    # Initialize database
+    db = Database()
+    await db.initialize()
     
     # Create application
     application = Application.builder().token(Config.BOT_TOKEN).build()
     
+    # Initialize handlers
+    handlers = Handlers(db)
+    admin_handlers = AdminHandlers(db)
+    
     # Add handlers
+    application.add_handler(CommandHandler("start", handlers.start))
+    application.add_handler(CommandHandler("help", handlers.help))
+    application.add_handler(CommandHandler("earn", handlers.earn))
+    application.add_handler(CommandHandler("order", handlers.order))
+    application.add_handler(CommandHandler("balance", handlers.balance))
+    application.add_handler(CommandHandler("profile", handlers.profile))
+    application.add_handler(CommandHandler("leaderboard", handlers.leaderboard))
+    application.add_handler(CommandHandler("support", handlers.support))
     
-    # Command handlers
-    application.add_handler(CommandHandler("start", Handlers.start))
-    application.add_handler(CommandHandler("help", Handlers.help_command))
-    application.add_handler(CommandHandler("profile", Handlers.profile))
-    application.add_handler(CommandHandler("balance", Handlers.balance))
-    application.add_handler(CommandHandler("channels", Handlers.channels))
-    application.add_handler(CommandHandler("referral", Handlers.referral))
-    application.add_handler(CommandHandler("services", Handlers.services))
-    application.add_handler(CommandHandler("orders", Handlers.orders))
-    application.add_handler(CommandHandler("stats", Handlers.stats))
+    # Admin handlers
+    application.add_handler(CommandHandler("admin", admin_handlers.admin_panel))
+    application.add_handler(CommandHandler("stats", admin_handlers.stats))
+    application.add_handler(CommandHandler("broadcast", admin_handlers.broadcast))
+    application.add_handler(CommandHandler("addpoints", admin_handlers.add_points))
+    application.add_handler(CommandHandler("removepoints", admin_handlers.remove_points))
+    application.add_handler(CommandHandler("ban", admin_handlers.ban_user))
+    application.add_handler(CommandHandler("unban", admin_handlers.unban_user))
+    application.add_handler(CommandHandler("setprice", admin_handlers.set_price))
+    application.add_handler(CommandHandler("users", admin_handlers.list_users))
     
-    # Admin command handlers
-    application.add_handler(CommandHandler("admin", AdminHandlers.admin_menu))
-    application.add_handler(CommandHandler("admin_stats", AdminHandlers.bot_stats))
-    application.add_handler(CommandHandler("users", AdminHandlers.users_list))
-    application.add_handler(CommandHandler("broadcast", AdminHandlers.broadcast_message))
-    application.add_handler(CommandHandler("send_points", AdminHandlers.send_points))
-    
-    # Callback query handler
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    # Callback query handlers
+    application.add_handler(CallbackQueryHandler(handlers.button_callback))
+    application.add_handler(CallbackQueryHandler(admin_handlers.admin_callback))
     
     # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_message))
+    application.add_handler(MessageHandler(filters.CONTACT, handlers.handle_contact))
+    application.add_handler(MessageHandler(filters.PHOTO, handlers.handle_photo))
+    application.add_handler(MessageHandler(filters.DOCUMENT, handlers.handle_document))
     
-    # Error handler
+    # Add error handler
     application.add_error_handler(error_handler)
     
-    # Start the bot
-    logger.info("Starting bot...")
-    application.run_polling(allowed_updates=["message", "callback_query"])
-
-async def handle_callback_query(update, context):
-    """Handle callback queries"""
-    query = update.callback_query
-    user_id = query.from_user.id
+    # Run the bot
+    logger.info("Bot started successfully!")
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(drop_pending_updates=True)
     
-    # Admin callbacks
-    if query.data.startswith(('add_channel', 'remove_channel', 'list_channels', 'all_orders', 
-                              'pending_orders', 'complete_order', 'cancel_order_admin', 
-                              'admin_complete_', 'admin_cancel_', 'back_to_admin')):
-        await AdminHandlers.handle_admin_callback(query, context)
-    else:
-        await Handlers.button_callback(update, context)
-
-async def handle_text_message(update, context):
-    """Handle text messages"""
-    user_id = update.effective_user.id
-    
-    # Admin text messages
-    if update.message.text in ["📊 إحصائيات البوت", "👥 المستخدمين", "📢 إدارة القنوات", 
-                               "📦 إدارة الطلبات", "✉️ رسالة جماعية", "💎 إرسال نقاط", 
-                               "🔙 القائمة الرئيسية"]:
-        await AdminHandlers.handle_admin_text(update, context)
-    
-    # Admin input handling
-    elif context.user_data.get('admin_waiting_for'):
-        await AdminHandlers.handle_admin_input(update, context)
-    
-    # Regular user messages
-    else:
-        await Handlers.handle_text_message(update, context)
+    try:
+        await application.updater.idle()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 async def error_handler(update, context):
     """Handle errors"""
@@ -100,208 +88,4 @@ async def error_handler(update, context):
         )
 
 if __name__ == "__main__":
-    main()import logging
-import asyncio
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from config import Config
-from handlers import Handlers
-from admin_handlers import AdminHandlers
-from database import Database
-
-# Set up logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Initialize database
-db = Database()
-
-def main():
-    """Main function to run the bot"""
-    # Check if bot token is provided
-    if not Config.BOT_TOKEN:
-        logger.error("Bot token not provided. Please set BOT_TOKEN in .env file")
-        return
-    
-    # Create application
-    application = Application.builder().token(Config.BOT_TOKEN).build()
-    
-    # Add handlers
-    
-    # Command handlers
-    application.add_handler(CommandHandler("start", Handlers.start))
-    application.add_handler(CommandHandler("help", Handlers.help_command))
-    application.add_handler(CommandHandler("profile", Handlers.profile))
-    application.add_handler(CommandHandler("balance", Handlers.balance))
-    application.add_handler(CommandHandler("channels", Handlers.channels))
-    application.add_handler(CommandHandler("referral", Handlers.referral))
-    application.add_handler(CommandHandler("services", Handlers.services))
-    application.add_handler(CommandHandler("orders", Handlers.orders))
-    application.add_handler(CommandHandler("stats", Handlers.stats))
-    
-    # Admin command handlers
-    application.add_handler(CommandHandler("admin", AdminHandlers.admin_menu))
-    application.add_handler(CommandHandler("admin_stats", AdminHandlers.bot_stats))
-    application.add_handler(CommandHandler("users", AdminHandlers.users_list))
-    application.add_handler(CommandHandler("broadcast", AdminHandlers.broadcast_message))
-    application.add_handler(CommandHandler("send_points", AdminHandlers.send_points))
-    
-    # Callback query handler
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
-    
-    # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    
-    # Error handler
-    application.add_error_handler(error_handler)
-    
-    # Start the bot
-    logger.info("Starting bot...")
-    application.run_polling(allowed_updates=["message", "callback_query"])
-
-async def handle_callback_query(update, context):
-    """Handle callback queries"""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Admin callbacks
-    if query.data.startswith(('add_channel', 'remove_channel', 'list_channels', 'all_orders', 
-                              'pending_orders', 'complete_order', 'cancel_order_admin', 
-                              'admin_complete_', 'admin_cancel_', 'back_to_admin')):
-        await AdminHandlers.handle_admin_callback(query, context)
-    else:
-        await Handlers.button_callback(update, context)
-
-async def handle_text_message(update, context):
-    """Handle text messages"""
-    user_id = update.effective_user.id
-    
-    # Admin text messages
-    if update.message.text in ["📊 إحصائيات البوت", "👥 المستخدمين", "📢 إدارة القنوات", 
-                               "📦 إدارة الطلبات", "✉️ رسالة جماعية", "💎 إرسال نقاط", 
-                               "🔙 القائمة الرئيسية"]:
-        await AdminHandlers.handle_admin_text(update, context)
-    
-    # Admin input handling
-    elif context.user_data.get('admin_waiting_for'):
-        await AdminHandlers.handle_admin_input(update, context)
-    
-    # Regular user messages
-    else:
-        await Handlers.handle_text_message(update, context)
-
-async def error_handler(update, context):
-    """Handle errors"""
-    logger.error(f"Update {update} caused error {context.error}")
-    
-    if update and update.effective_message:
-        await update.effective_message.reply_text(
-            "❌ حدث خطأ في معالجة طلبك. يرجى المحاولة مرة أخرى."
-        )
-
-if __name__ == "__main__":
-    main()import logging
-import asyncio
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from config import Config
-from handlers import Handlers
-from admin_handlers import AdminHandlers
-from database import Database
-
-# Set up logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Initialize database
-db = Database()
-
-def main():
-    """Main function to run the bot"""
-    # Check if bot token is provided
-    if not Config.BOT_TOKEN:
-        logger.error("Bot token not provided. Please set BOT_TOKEN in .env file")
-        return
-    
-    # Create application
-    application = Application.builder().token(Config.BOT_TOKEN).build()
-    
-    # Add handlers
-    
-    # Command handlers
-    application.add_handler(CommandHandler("start", Handlers.start))
-    application.add_handler(CommandHandler("help", Handlers.help_command))
-    application.add_handler(CommandHandler("profile", Handlers.profile))
-    application.add_handler(CommandHandler("balance", Handlers.balance))
-    application.add_handler(CommandHandler("channels", Handlers.channels))
-    application.add_handler(CommandHandler("referral", Handlers.referral))
-    application.add_handler(CommandHandler("services", Handlers.services))
-    application.add_handler(CommandHandler("orders", Handlers.orders))
-    application.add_handler(CommandHandler("stats", Handlers.stats))
-    
-    # Admin command handlers
-    application.add_handler(CommandHandler("admin", AdminHandlers.admin_menu))
-    application.add_handler(CommandHandler("admin_stats", AdminHandlers.bot_stats))
-    application.add_handler(CommandHandler("users", AdminHandlers.users_list))
-    application.add_handler(CommandHandler("broadcast", AdminHandlers.broadcast_message))
-    application.add_handler(CommandHandler("send_points", AdminHandlers.send_points))
-    
-    # Callback query handler
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
-    
-    # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-    
-    # Error handler
-    application.add_error_handler(error_handler)
-    
-    # Start the bot
-    logger.info("Starting bot...")
-    application.run_polling(allowed_updates=["message", "callback_query"])
-
-async def handle_callback_query(update, context):
-    """Handle callback queries"""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Admin callbacks
-    if query.data.startswith(('add_channel', 'remove_channel', 'list_channels', 'all_orders', 
-                              'pending_orders', 'complete_order', 'cancel_order_admin', 
-                              'admin_complete_', 'admin_cancel_', 'back_to_admin')):
-        await AdminHandlers.handle_admin_callback(query, context)
-    else:
-        await Handlers.button_callback(update, context)
-
-async def handle_text_message(update, context):
-    """Handle text messages"""
-    user_id = update.effective_user.id
-    
-    # Admin text messages
-    if update.message.text in ["📊 إحصائيات البوت", "👥 المستخدمين", "📢 إدارة القنوات", 
-                               "📦 إدارة الطلبات", "✉️ رسالة جماعية", "💎 إرسال نقاط", 
-                               "🔙 القائمة الرئيسية"]:
-        await AdminHandlers.handle_admin_text(update, context)
-    
-    # Admin input handling
-    elif context.user_data.get('admin_waiting_for'):
-        await AdminHandlers.handle_admin_input(update, context)
-    
-    # Regular user messages
-    else:
-        await Handlers.handle_text_message(update, context)
-
-async def error_handler(update, context):
-    """Handle errors"""
-    logger.error(f"Update {update} caused error {context.error}")
-    
-    if update and update.effective_message:
-        await update.effective_message.reply_text(
-            "❌ حدث خطأ في معالجة طلبك. يرجى المحاولة مرة أخرى."
-        )
-
-if __name__ == "__main__":
-    main()
+    asyncio.run(main())
